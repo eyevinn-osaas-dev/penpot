@@ -10,6 +10,49 @@ import {
   mapContentFragmentFromHTML,
   mapContentFragmentFromString,
 } from "../content/dom/Content.js";
+import { TextEditor } from "../TextEditor.js";
+
+/**
+ * Returns a document fragment of text plain data.
+ *
+ * @param {DataTransfer} clipboardData
+ * @returns {DocumentFragment}
+ */
+function getPlainFragmentFromClipboardData(clipboardData) {
+  const plain = clipboardData.getData("text/plain");
+  return mapContentFragmentFromString(
+    plain,
+    selectionController.currentStyle,
+  );
+}
+
+/**
+ * Returns a document fragment of html data.
+ *
+ * @param {DataTransfer} clipboardData
+ * @returns {DocumentFragment}
+ */
+function getFormattedFragmentFromClipboardData(clipboardData) {
+  const html = clipboardData.getData("text/html");
+  return mapContentFragmentFromHTML(
+    html,
+    selectionController.currentStyle,
+  );
+}
+
+/**
+ * Returns a document fragment of html or plain data.
+ *
+ * @param {DataTransfer} clipboardData
+ * @returns {DocumentFragment}
+ */
+function getFormattedOrPlainFragmentFromClipboardData(clipboardData) {
+  if (clipboardData.types.includes("text/html")) {
+    return getFormattedFragmentFromClipboardData(clipboardData);
+  } else if (clipboardData.types.includes("text/plain")) {
+    return getPlainFragmentFromClipboardData(clipboardData);
+  }
+}
 
 /**
  * When the user pastes some HTML, what we do is generate
@@ -28,21 +71,14 @@ export function paste(event, editor, selectionController) {
   event.preventDefault();
 
   let fragment = null;
-  if (event.clipboardData.types.includes("text/html")) {
-    const html = event.clipboardData.getData("text/html");
-    fragment = mapContentFragmentFromHTML(
-      html,
-      selectionController.currentStyle,
-    );
-  } else if (event.clipboardData.types.includes("text/plain")) {
-    const plain = event.clipboardData.getData("text/plain");
-    fragment = mapContentFragmentFromString(
-      plain,
-      selectionController.currentStyle,
-    );
+  if (editor.options.onlyPlainTextPaste) {
+    fragment = getPlainFragmentFromClipboardData(event.clipboardData);
+  } else {
+    fragment = getFormattedOrPlainFragmentFromClipboardData(event.clipboardData);
   }
 
   if (!fragment) {
+    // NOOP
     return;
   }
 
