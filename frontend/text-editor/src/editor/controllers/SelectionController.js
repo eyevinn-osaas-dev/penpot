@@ -56,7 +56,7 @@ import SafeGuard from "./SafeGuard.js";
  * Supported options for the SelectionController.
  *
  * @typedef {Object} SelectionControllerOptions
- * @property {Object} [debug] An object with references to DOM elements that will keep all the debugging values.
+ * @property {SelectionControllerDebug} [debug] An object with references to DOM elements that will keep all the debugging values.
  */
 
 /**
@@ -202,6 +202,11 @@ export class SelectionController extends EventTarget {
   #fixInsertCompositionText = false;
 
   /**
+   * @type {TextEditorOptions}
+   */
+  #options
+
+  /**
    * Constructor
    *
    * @param {TextEditor} textEditor
@@ -217,6 +222,7 @@ export class SelectionController extends EventTarget {
       throw new TypeError("Invalid EventTarget");
     }
     */
+    this.#options = options;
     this.#debug = options?.debug;
     this.#styleDefaults = options?.styleDefaults;
     this.#selection = selection;
@@ -234,6 +240,15 @@ export class SelectionController extends EventTarget {
    */
   get currentStyle() {
     return this.#currentStyle;
+  }
+
+  /**
+   * Text editor options.
+   *
+   * @type {TextEditorOptions}
+   */
+  get options() {
+    return this.#options;
   }
 
   /**

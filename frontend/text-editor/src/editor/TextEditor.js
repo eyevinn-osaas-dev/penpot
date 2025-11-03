@@ -23,6 +23,13 @@ import { isLineBreak } from "./content/dom/LineBreak.js";
 import LayoutType from "./layout/LayoutType.js";
 
 /**
+ * @typedef {Object} TextEditorOptions
+ * @property {CSSStyleDeclaration|Object.<string,*>} [styleDefaults]
+ * @property {SelectionControllerDebug} [debug]
+ * @property {boolean} [allowHTMLPaste=false]
+ */
+
+/**
  * Text Editor.
  */
 export class TextEditor extends EventTarget {
@@ -73,6 +80,8 @@ export class TextEditor extends EventTarget {
    * `beforeinput` and `input` have different `data` when
    * characters are deleted when the input type is
    * `insertCompositionText`.
+   *
+   * @type {boolean}
    */
   #fixInsertCompositionText = false;
 
@@ -88,6 +97,7 @@ export class TextEditor extends EventTarget {
    *
    * @param {HTMLElement} element
    * @param {HTMLCanvasElement} canvas
+   * @param {TextEditorOptions} [options]
    */
   constructor(element, canvas, options) {
     super();
