@@ -10,8 +10,9 @@
 
 ### :sparkles: New features & Enhancements
 
-- Select boards to export as PDF [Taiga #12320](https://tree.taiga.io/project/penpot/issue/12320)
-- Toggle for switching boolean property values [Taiga #12341](https://tree.taiga.io/project/penpot/us/12341)
+- Add the ability to select boards to export as PDF [Taiga #12320](https://tree.taiga.io/project/penpot/issue/12320)
+- Add toggle for switching boolean property values [Taiga #12341](https://tree.taiga.io/project/penpot/us/12341)
+- Add new shape validation mechanism for shapes [Github #7696](https://github.com/penpot/penpot/pull/7696)
 
 ### :bug: Bugs fixed
 
