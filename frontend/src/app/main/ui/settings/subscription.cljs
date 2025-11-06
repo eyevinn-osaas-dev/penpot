@@ -86,7 +86,6 @@
                               "professional" (tr "subscription.settings.professional")
                               "unlimited" (tr "subscription.settings.unlimited")
                               "enterprise" (tr "subscription.settings.enterprise")))
-        add-payment-details* (mf/use-state false)
         min-editors                (or (count editors) 1)
         initial                    (mf/with-memo [min-editors]
                                      {:min-members min-editors})
@@ -94,21 +93,23 @@
                                                 :initial initial)
         submit-in-progress*        (mf/use-state false)
         subscribe-to-unlimited     (mf/use-fn
-                                    (fn [form]
-                                      ;; add param like showDetail to true in case we want to go to the checkout first
-                                      (if (and (not @submit-in-progress*) (not @add-payment-details*))
+                                    (mf/deps form)
+                                    (fn [add-payment-details]
+                                      (when (not @submit-in-progress*)
                                         (let [data (:clean-data @form)
                                               return-url (-> (rt/get-current-href) (rt/encode-url))
-                                              href (dm/str "payments/subscriptions/create?type=unlimited&quantity=" (:min-members data) "&returnUrl=" return-url)]
+                                              href (if add-payment-details
+                                                     ;;update url to go to checkout directly
+                                                     (dm/str "URLtoBeDefined?type=unlimited&quantity=" (:min-members data) "&returnUrl=" return-url)
+                                                     (dm/str "payments/subscriptions/create?type=unlimited&quantity=" (:min-members data) "&returnUrl=" return-url))]
                                           (reset! submit-in-progress* true)
                                           (reset! form nil)
+                                          (print href)
                                           ;; (st/emit! (ptk/event ::ev/event {::ev/name "create-trial-subscription"
                                           ;;                                  :type "unlimited"
                                           ;;                                  :quantity (:min-members data)})
                                           ;;           (rt/nav-raw :href href))
-                                          (println "subscribe " href)
-                                          )
-                                        (println "go to checkout"))))
+                                          ))))
 
         subscribe-to-enterprise   (mf/use-fn
                                    (fn []
@@ -117,10 +118,6 @@
                                      (let [return-url (-> (rt/get-current-href) (rt/encode-url))
                                            href (dm/str "payments/subscriptions/create?type=enterprise&returnUrl=" return-url)]
                                        (st/emit! (rt/nav-raw :href href)))))
-
-        handle-add-card-unlimited (mf/use-fn
-                                   (fn []
-                                     (reset! add-payment-details* true)))
 
         handle-accept-dialog       (mf/use-fn
                                     (fn []
@@ -183,7 +180,7 @@
 
        (if (and (= subscription-type "unlimited")
                 (or subscribe-to-trial (contains? #{"unpaid" "canceled"} (:status current-subscription))))
-         [:& fm/form {:on-submit subscribe-to-unlimited
+         [:& fm/form {:on-submit handle-unlimited-modal-step
                       :class (stl/css :seats-form)
                       :form form}
           (when (= unlimited-modal-step 1)
@@ -225,11 +222,9 @@
                  :value (tr "ds.confirm-cancel")
                  :on-click handle-close-dialog}]
 
-               [:input
-                {:class (stl/css :primary-button)
-                 :type "button"
-                 :value (tr "labels.continue")
-                 :on-click handle-unlimited-modal-step}]]]])
+               [:> fm/submit-button*
+                {:label (tr "labels.continue")
+                 :class (stl/css :primary-button)}]]]])
 
           (when (= unlimited-modal-step 2)
             [:*
@@ -238,13 +233,18 @@
 
              [:div {:class (stl/css :modal-footer)}
               [:div {:class (stl/css :action-buttons)}
-               [:> fm/submit-button*
-                {:label (tr "subscription.settings.management.dialog.step-2.skip-button")
-                 :class (stl/css :cancel-button)}]
-               [:> fm/submit-button*
-                {:label (tr "subscription.settings.management.dialog.step-2.add-payment-button")
-                 :class (stl/css :primary-button)
-                 :on-click handle-add-card-unlimited}]]]])]
+
+               [:input
+                {:class (stl/css :cancel-button)
+                 :type "button"
+                 :value (tr "subscription.settings.management.dialog.step-2.skip-button")
+                 :on-click #(subscribe-to-unlimited false)}]
+
+               [:input
+                {:class (stl/css :primary-button)
+                 :type "button"
+                 :value (tr "subscription.settings.management.dialog.step-2.add-payment-button")
+                 :on-click #(subscribe-to-unlimited true)}]]]])]
 
          [:div {:class (stl/css :modal-footer)}
           [:div {:class (stl/css :action-buttons)}
