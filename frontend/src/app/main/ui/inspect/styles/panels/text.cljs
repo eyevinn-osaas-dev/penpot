@@ -16,8 +16,8 @@
    [app.main.ui.inspect.styles.property-detail-copiable :refer [property-detail-copiable*]]
    [app.main.ui.inspect.styles.rows.color-properties-row :refer [color-properties-row*]]
    [app.main.ui.inspect.styles.rows.properties-row :refer [properties-row*]]
+   [app.util.clipboard :as clipboard]
    [app.util.timers :as tm]
-   [app.util.webapi :as wapi]
    [cuerdas.core :as str]
    [rumext.v2 :as mf]))
 
@@ -195,7 +195,7 @@
                                                (.toUpperCase text)
                                                text)]
                           (reset! copied* true)
-                          (wapi/write-to-clipboard formatted-text)
+                          (clipboard/to-clipboard formatted-text)
                           (tm/schedule 1000 #(reset! copied* false)))))]
                  [:div {:class (stl/css :text-content-wrapper)}
                   [:> property-detail-copiable* {:copied copied
