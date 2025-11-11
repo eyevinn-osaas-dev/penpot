@@ -342,9 +342,14 @@ impl Shape {
         matches!(
             self.shape_type,
             Type::Frame(Frame {
-                layout: Some(layouts::Layout::FlexLayout(_, FlexData {
-                    direction: layouts::FlexDirection::RowReverse | layouts::FlexDirection::ColumnReverse, ..
-                })),
+                layout: Some(layouts::Layout::FlexLayout(
+                    _,
+                    FlexData {
+                        direction: layouts::FlexDirection::RowReverse
+                            | layouts::FlexDirection::ColumnReverse,
+                        ..
+                    }
+                )),
                 ..
             })
         )
