@@ -378,7 +378,14 @@ pub fn propagate_modifiers(
 ) -> Vec<TransformEntry> {
     let mut entries: VecDeque<_> = modifiers
         .iter()
-        .map(|entry| Modifier::Transform(entry.clone()))
+        .map(|entry| {
+            // If we receibe a identity matrix we force a reflow
+            if math::identitish(&entry.transform) {
+                Modifier::Reflow(entry.id)
+            } else {
+                Modifier::Transform(entry.clone())
+            }
+        })
         .collect();
 
     let mut modifiers = HashMap::<Uuid, Matrix>::new();

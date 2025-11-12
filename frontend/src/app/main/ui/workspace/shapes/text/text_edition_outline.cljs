@@ -6,6 +6,9 @@
 
 (ns app.main.ui.workspace.shapes.text.text-edition-outline
   (:require
+   [app.common.geom.matrix :as gmt]
+   [app.common.data.macros :as dm]
+   [okulary.core :as l]
    [app.common.geom.shapes :as gsh]
    [app.main.data.workspace.texts :as dwt]
    [app.main.features :as features]
@@ -14,12 +17,24 @@
    [app.render-wasm.api :as wasm.api]
    [rumext.v2 :as mf]))
 
+(defn get-selrect
+  [selrect-transform shape]
+  (if (some? selrect-transform)
+    (let [{:keys [center width height transform]} selrect-transform]
+      [(gsh/center->rect center width height)
+       (gmt/transform-in center transform)])
+    [(dm/get-prop shape :selrect)
+     (gsh/transform-matrix shape)]))
+
+(def workspace-selrect-transform
+  (l/derived :workspace-selrect st/state))
+
 (mf/defc text-edition-outline
   [{:keys [shape zoom modifiers]}]
   (if (features/active-feature? @st/state "render-wasm/v1")
-    (let [transform (gsh/transform-str shape)
-          {:keys [id x y grow-type]} shape
-          {:keys [width height]} (if (= :fixed grow-type) shape (wasm.api/get-text-dimensions id))]
+    (let [selrect-transform (mf/deref workspace-selrect-transform)
+          [{:keys [x y width height]} transform] (get-selrect selrect-transform shape)]
+      (prn ">OUTLINE " x y width height)
       [:rect.main.viewport-selrect
        {:x x
         :y y

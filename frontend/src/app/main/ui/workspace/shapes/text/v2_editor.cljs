@@ -7,6 +7,9 @@
 (ns app.main.ui.workspace.shapes.text.v2-editor
   (:require-macros [app.main.style :as stl])
   (:require
+   [app.common.geom.rect :as grc]
+   [app.common.geom.matrix :as gmt]
+   [okulary.core :as l]
    [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.files.helpers :as cfh]
@@ -32,6 +35,19 @@
    [app.util.text.content :as content]
    [app.util.text.content.styles :as styles]
    [rumext.v2 :as mf]))
+
+(defn get-selrect
+  [selrect-transform shape]
+  (if (some? selrect-transform)
+    (let [{:keys [center width height transform]} selrect-transform]
+      [(gsh/center->rect center width height)
+       (gmt/transform-in center transform)])
+    [(dm/get-prop shape :selrect)
+     (gsh/transform-matrix shape)]))
+
+(def workspace-selrect-transform
+  (l/derived :workspace-selrect st/state))
+
 
 (defn get-contrast-color [background-color]
   (when background-color
@@ -303,12 +319,14 @@
                 (some? modifiers)
                 (gsh/transform-shape modifiers))
 
-        [x y width height]
+        [{:keys [x y width height]} transform]
         (if (features/active-feature? @st/state "render-wasm/v1")
-          (let [{:keys [width height]} (wasm.api/get-text-dimensions shape-id)
+          #_(let [{:keys [width height]} (wasm.api/get-text-dimensions shape-id)
                 {:keys [x y]} (:selrect shape)]
 
-            [x y width height])
+              [x y width height])
+          (let [selrect-transform (mf/deref workspace-selrect-transform)]
+            (get-selrect selrect-transform shape))
 
           (let [bounds (gst/shape->rect shape)
                 x      (mth/min (dm/get-prop bounds :x)
@@ -319,13 +337,16 @@
                                 (dm/get-prop shape :width))
                 height (mth/max (dm/get-prop bounds :height)
                                 (dm/get-prop shape :height))]
-            [x y width height]))
+            [x y width height]
+
+            [(grc/make-rect x y width height) (gsh/transform-matrix shape)]
+            ))
 
         style
         (cond-> #js {:pointerEvents "all"}
 
-          (not (cf/check-browser? :safari))
-          (obj/merge!
+          #_(not (cf/check-browser? :safari))
+          #_(obj/merge!
            #js {:transform (dm/fmt "translate(%px, %px)" (- (dm/get-prop shape :x) x) (- (dm/get-prop shape :y) y))})
 
           (cf/check-browser? :safari-17)
@@ -344,8 +365,9 @@
                 :transform (when (some? maybe-zoom)
                              (dm/fmt "scale(%)" maybe-zoom))}))]
 
-    [:g.text-editor {:clip-path (dm/fmt "url(#%)" clip-id)
-                     :transform (dm/str (gsh/transform-matrix shape))}
+    (prn ">EDITOR" x y width height)
+    [:g#v2.text-editor {;;:clip-path (dm/fmt "url(#%)" clip-id)
+                        :transform (dm/str transform)}
      [:defs
       [:clipPath {:id clip-id}
        [:rect {:x x :y y :width width :height height}]]]
