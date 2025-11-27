@@ -6,13 +6,16 @@ use crate::{
 
 use core::f32;
 use macros::ToJs;
+use skia_safe::textlayout::{RectHeightStyle, RectWidthStyle};
 use skia_safe::{
     self as skia,
     paint::{self, Paint},
     textlayout::ParagraphBuilder,
     textlayout::ParagraphStyle,
     textlayout::PositionWithAffinity,
+    Contains,
 };
+
 use std::collections::HashSet;
 
 use super::FontFamily;
@@ -38,6 +41,7 @@ pub struct TextContentSize {
     pub width: f32,
     pub height: f32,
     pub max_width: f32,
+    pub normalized_line_height: f32,
 }
 
 const DEFAULT_TEXT_CONTENT_SIZE: f32 = 0.01;
@@ -48,14 +52,7 @@ impl TextContentSize {
             width: DEFAULT_TEXT_CONTENT_SIZE,
             height: DEFAULT_TEXT_CONTENT_SIZE,
             max_width: DEFAULT_TEXT_CONTENT_SIZE,
-        }
-    }
-
-    pub fn new(width: f32, height: f32, max_width: f32) -> Self {
-        Self {
-            width,
-            height,
-            max_width,
+            normalized_line_height: 0.0,
         }
     }
 
@@ -64,6 +61,21 @@ impl TextContentSize {
             width,
             height,
             max_width: DEFAULT_TEXT_CONTENT_SIZE,
+            normalized_line_height: 0.0,
+        }
+    }
+
+    pub fn new_with_normalized_line_height(
+        width: f32,
+        height: f32,
+        max_width: f32,
+        normalized_line_height: f32,
+    ) -> Self {
+        Self {
+            width,
+            height,
+            max_width,
+            normalized_line_height,
         }
     }
 
@@ -92,6 +104,9 @@ impl TextContentSize {
             self.height = size.height;
         } else {
             self.height = default_height;
+        }
+        if f32::is_finite(size.normalized_line_height) {
+            self.normalized_line_height = size.normalized_line_height;
         }
     }
 }
@@ -170,6 +185,25 @@ impl TextContentLayout {
     }
 }
 
+/*
+ * Check if the current x,y (in paragraph relative coordinates) is inside
+ * the paragraph
+ */
+#[allow(dead_code)]
+fn intersects(paragraph: &skia_safe::textlayout::Paragraph, x: f32, y: f32) -> bool {
+    if y < 0.0 || y > paragraph.height() {
+        return false;
+    }
+
+    let pos = paragraph.get_glyph_position_at_coordinate((x, y));
+    let idx = pos.position as usize;
+
+    let rects =
+        paragraph.get_rects_for_range(0..idx + 1, RectHeightStyle::Tight, RectWidthStyle::Tight);
+
+    rects.iter().any(|r| r.rect.contains(&Point::new(x, y)))
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct TextContent {
     pub paragraphs: Vec<Paragraph>,
@@ -232,6 +266,10 @@ impl TextContent {
         self.size.width
     }
 
+    pub fn normalized_line_height(&self) -> f32 {
+        self.size.normalized_line_height
+    }
+
     pub fn grow_type(&self) -> GrowType {
         self.grow_type
     }
@@ -240,7 +278,7 @@ impl TextContent {
         self.grow_type = grow_type;
     }
 
-    pub fn calculate_bounds(&self, shape: &Shape) -> Bounds {
+    pub fn calculate_bounds(&self, shape: &Shape, apply_transform: bool) -> Bounds {
         let (x, mut y, transform, center) = (
             shape.selrect.x(),
             shape.selrect.y(),
@@ -278,7 +316,7 @@ impl TextContent {
             Point::new(text_rect.x(), text_rect.y() + text_rect.height()),
         );
 
-        if !transform.is_identity() {
+        if apply_transform && !transform.is_identity() {
             let mut matrix = *transform;
             matrix.post_translate(*center);
             matrix.pre_translate(-*center);
@@ -286,6 +324,32 @@ impl TextContent {
         }
 
         bounds
+    }
+
+    pub fn content_rect(&self, selrect: &Rect, valign: VerticalAlign) -> Rect {
+        let x = selrect.x();
+        let mut y = selrect.y();
+
+        let width = if self.grow_type() == GrowType::AutoWidth {
+            self.size.width
+        } else {
+            selrect.width()
+        };
+
+        let height = if self.size.width.round() != width.round() {
+            self.get_height(width)
+        } else {
+            self.size.height
+        };
+
+        let offset_y = match valign {
+            VerticalAlign::Center => (selrect.height() - height) / 2.0,
+            VerticalAlign::Bottom => selrect.height() - height,
+            _ => 0.0,
+        };
+        y += offset_y;
+
+        Rect::from_xywh(x, y, width, height)
     }
 
     pub fn transform(&mut self, transform: &Matrix) {
@@ -400,9 +464,33 @@ impl TextContent {
         paragraphs
     }
 
+    /// Calculate the normalized line height from paragraph builders
+    fn calculate_normalized_line_height(
+        &self,
+        paragraph_builders: &mut [ParagraphBuilderGroup],
+        width: f32,
+    ) -> f32 {
+        let mut normalized_line_height = 0.0;
+        for paragraph_builder_group in paragraph_builders.iter_mut() {
+            for paragraph_builder in paragraph_builder_group.iter_mut() {
+                let mut paragraph = paragraph_builder.build();
+                paragraph.layout(width);
+                let baseline = paragraph.ideographic_baseline();
+                if baseline > normalized_line_height {
+                    normalized_line_height = baseline;
+                }
+            }
+        }
+        normalized_line_height
+    }
+
     /// Performs an Auto Width text layout.
     fn text_layout_auto_width(&self) -> TextContentLayoutResult {
         let mut paragraph_builders = self.paragraph_builder_group_from_text(None);
+
+        let normalized_line_height =
+            self.calculate_normalized_line_height(&mut paragraph_builders, f32::MAX);
+
         let paragraphs =
             self.build_paragraphs_from_paragraph_builders(&mut paragraph_builders, f32::MAX);
 
@@ -417,7 +505,12 @@ impl TextContent {
                     )
                 });
 
-        let size = TextContentSize::new(width.ceil(), height.ceil(), width.ceil());
+        let size = TextContentSize::new_with_normalized_line_height(
+            width.ceil(),
+            height.ceil(),
+            width.ceil(),
+            normalized_line_height,
+        );
         TextContentLayoutResult(paragraph_builders, paragraphs, size)
     }
 
@@ -426,6 +519,10 @@ impl TextContent {
     fn text_layout_auto_height(&self) -> TextContentLayoutResult {
         let width = self.width();
         let mut paragraph_builders = self.paragraph_builder_group_from_text(None);
+
+        let normalized_line_height =
+            self.calculate_normalized_line_height(&mut paragraph_builders, width);
+
         let paragraphs =
             self.build_paragraphs_from_paragraph_builders(&mut paragraph_builders, width);
         let height = paragraphs
@@ -434,7 +531,12 @@ impl TextContent {
             .fold(0.0, |auto_height, paragraph| {
                 auto_height + paragraph.height()
             });
-        let size = TextContentSize::new_with_size(width.ceil(), height.ceil());
+        let size = TextContentSize::new_with_normalized_line_height(
+            width,
+            height.ceil(),
+            DEFAULT_TEXT_CONTENT_SIZE,
+            normalized_line_height,
+        );
         TextContentLayoutResult(paragraph_builders, paragraphs, size)
     }
 
@@ -442,6 +544,10 @@ impl TextContent {
     fn text_layout_fixed(&self) -> TextContentLayoutResult {
         let width = self.width();
         let mut paragraph_builders = self.paragraph_builder_group_from_text(None);
+
+        let normalized_line_height =
+            self.calculate_normalized_line_height(&mut paragraph_builders, width);
+
         let paragraphs =
             self.build_paragraphs_from_paragraph_builders(&mut paragraph_builders, width);
         let paragraph_height = paragraphs
@@ -451,7 +557,12 @@ impl TextContent {
                 auto_height + paragraph.height()
             });
 
-        let size = TextContentSize::new_with_size(width.ceil(), paragraph_height.ceil());
+        let size = TextContentSize::new_with_normalized_line_height(
+            width,
+            paragraph_height.ceil(),
+            DEFAULT_TEXT_CONTENT_SIZE,
+            normalized_line_height,
+        );
         TextContentLayoutResult(paragraph_builders, paragraphs, size)
     }
 
@@ -581,6 +692,62 @@ impl TextContent {
         let fallback_height = selrect.height().max(self.size.height);
 
         (fallback_width, fallback_height)
+    }
+
+    #[allow(dead_code)]
+    pub fn intersect_position_in_shape(&self, shape: &Shape, x_pos: f32, y_pos: f32) -> bool {
+        let rect = shape.selrect;
+        let mut matrix = Matrix::new_identity();
+        let center = shape.center();
+        let Some(inv_transform) = &shape.transform.invert() else {
+            return false;
+        };
+        matrix.pre_translate(center);
+        matrix.pre_concat(inv_transform);
+        matrix.pre_translate(-center);
+
+        let result = matrix.map_point((x_pos, y_pos));
+
+        let x_pos = result.x;
+        let y_pos = result.y;
+
+        x_pos >= rect.x() && x_pos <= rect.right() && y_pos >= rect.y() && y_pos <= rect.bottom()
+    }
+
+    pub fn intersect_position_in_text(&self, shape: &Shape, x_pos: f32, y_pos: f32) -> bool {
+        let rect = self.content_rect(&shape.selrect, shape.vertical_align);
+        let mut matrix = Matrix::new_identity();
+        let center = shape.center();
+        let Some(inv_transform) = &shape.transform.invert() else {
+            return false;
+        };
+        matrix.pre_translate(center);
+        matrix.pre_concat(inv_transform);
+        matrix.pre_translate(-center);
+
+        let result = matrix.map_point((x_pos, y_pos));
+
+        // Change coords to content space
+        let x_pos = result.x - rect.x();
+        let y_pos = result.y - rect.y();
+
+        let width = self.width();
+        let mut paragraph_builders = self.paragraph_builder_group_from_text(None);
+        let paragraphs =
+            self.build_paragraphs_from_paragraph_builders(&mut paragraph_builders, width);
+
+        paragraphs
+            .iter()
+            .flatten()
+            .scan(
+                (0 as f32, None::<skia::textlayout::Paragraph>),
+                |(height, _), p| {
+                    let prev_height = *height;
+                    *height += p.height();
+                    Some((prev_height, p))
+                },
+            )
+            .any(|(height, p)| intersects(p, x_pos, y_pos - height))
     }
 }
 

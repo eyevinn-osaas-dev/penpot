@@ -55,8 +55,8 @@
         text-direction  (sr/translate-text-direction (get paragraph :text-direction))
         text-decoration (sr/translate-text-decoration (get paragraph :text-decoration))
         text-transform  (sr/translate-text-transform (get paragraph :text-transform))
-        line-height     (get paragraph :line-height 1.2)
-        letter-spacing  (get paragraph :letter-spacing)]
+        line-height     (f/serialize-line-height (get paragraph :line-height))
+        letter-spacing  (f/serialize-letter-spacing (get paragraph :letter-spacing))]
 
     (-> offset
         (mem/write-u8 dview text-align)
@@ -73,14 +73,18 @@
   [offset dview spans paragraph]
   (let [paragraph-font-size (get paragraph :font-size)
         paragraph-font-weight (-> paragraph :font-weight f/serialize-font-weight)
-        paragraph-line-height (get paragraph :line-height 1.2)]
+        paragraph-line-height (f/serialize-line-height (get paragraph :line-height))]
     (reduce (fn [offset span]
               (let [font-style  (sr/translate-font-style (get span :font-style "normal"))
                     font-size   (get span :font-size paragraph-font-size)
-                    line-height  (get span :line-height paragraph-line-height)
-                    letter-spacing (get span :letter-spacing 0.0)
+                    font-size   (f/serialize-font-size font-size)
+
+                    line-height     (f/serialize-line-height (get span :line-height) paragraph-line-height)
+                    letter-spacing  (f/serialize-letter-spacing (get paragraph :letter-spacing))
+
                     font-weight (get span :font-weight paragraph-font-weight)
                     font-weight (f/serialize-font-weight font-weight)
+
                     font-id     (f/normalize-font-id (get span :font-id "sourcesanspro"))
                     font-family (hash (get span :font-family "sourcesanspro"))
 

@@ -1,4 +1,4 @@
-use super::{RenderState, Shape, SurfaceId};
+use super::{filters, RenderState, Shape, SurfaceId};
 use crate::{
     math::Rect,
     shapes::{
@@ -168,35 +168,71 @@ pub fn render(
     shadow: Option<&Paint>,
     blur: Option<&ImageFilter>,
 ) {
-    let render_canvas = if let Some(rs) = render_state {
-        rs.surfaces.canvas(surface_id.unwrap_or(SurfaceId::Fills))
-    } else if let Some(c) = canvas {
-        c
-    } else {
-        return;
-    };
+    if let Some(render_state) = render_state {
+        let target_surface = surface_id.unwrap_or(SurfaceId::Fills);
 
+        if let Some(blur_filter) = blur {
+            let bounds = blur_filter.compute_fast_bounds(shape.selrect);
+            if bounds.is_finite() && bounds.width() > 0.0 && bounds.height() > 0.0 {
+                let blur_filter_clone = blur_filter.clone();
+                if filters::render_with_filter_surface(
+                    render_state,
+                    bounds,
+                    target_surface,
+                    |state, temp_surface| {
+                        let temp_canvas = state.surfaces.canvas(temp_surface);
+                        render_text_on_canvas(
+                            temp_canvas,
+                            shape,
+                            paragraph_builders,
+                            shadow,
+                            Some(&blur_filter_clone),
+                        );
+                    },
+                ) {
+                    return;
+                }
+            }
+        }
+
+        let canvas = render_state.surfaces.canvas(target_surface);
+        render_text_on_canvas(canvas, shape, paragraph_builders, shadow, blur);
+        return;
+    }
+
+    if let Some(canvas) = canvas {
+        render_text_on_canvas(canvas, shape, paragraph_builders, shadow, blur);
+    }
+}
+
+fn render_text_on_canvas(
+    canvas: &Canvas,
+    shape: &Shape,
+    paragraph_builders: &mut [Vec<ParagraphBuilder>],
+    shadow: Option<&Paint>,
+    blur: Option<&ImageFilter>,
+) {
     if let Some(blur_filter) = blur {
         let mut blur_paint = Paint::default();
         blur_paint.set_image_filter(blur_filter.clone());
         let blur_layer = SaveLayerRec::default().paint(&blur_paint);
-        render_canvas.save_layer(&blur_layer);
+        canvas.save_layer(&blur_layer);
     }
 
     if let Some(shadow_paint) = shadow {
         let layer_rec = SaveLayerRec::default().paint(shadow_paint);
-        render_canvas.save_layer(&layer_rec);
-        draw_text(render_canvas, shape, paragraph_builders);
-        render_canvas.restore();
+        canvas.save_layer(&layer_rec);
+        draw_text(canvas, shape, paragraph_builders);
+        canvas.restore();
     } else {
-        draw_text(render_canvas, shape, paragraph_builders);
+        draw_text(canvas, shape, paragraph_builders);
     }
 
     if blur.is_some() {
-        render_canvas.restore();
+        canvas.restore();
     }
 
-    render_canvas.restore();
+    canvas.restore();
 }
 
 fn draw_text(
@@ -217,6 +253,7 @@ fn draw_text(
 
     let layer_rec = SaveLayerRec::default();
     canvas.save_layer(&layer_rec);
+    let mut normalized_line_height = text_content.normalized_line_height();
 
     for paragraph_builder_group in paragraph_builder_groups {
         let mut group_offset_y = global_offset_y;
@@ -228,8 +265,14 @@ fn draw_text(
             let xy = (shape.selrect().x(), shape.selrect().y() + group_offset_y);
             paragraph.paint(canvas, xy);
 
+            let line_metrics = paragraph.get_line_metrics();
             if paragraph_index == group_len - 1 {
-                group_offset_y += paragraph.ideographic_baseline();
+                if line_metrics.is_empty() {
+                    group_offset_y += normalized_line_height;
+                } else {
+                    normalized_line_height = paragraph.ideographic_baseline();
+                    group_offset_y += paragraph.ideographic_baseline() * line_metrics.len() as f32;
+                }
             }
 
             for line_metrics in paragraph.get_line_metrics().iter() {

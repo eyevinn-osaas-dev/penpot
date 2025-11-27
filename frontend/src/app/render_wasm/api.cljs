@@ -23,6 +23,8 @@
    [app.main.fonts :as fonts]
    [app.main.refs :as refs]
    [app.main.render :as render]
+   [app.main.store :as st]
+   [app.main.worker :as mw]
    [app.render-wasm.api.fonts :as f]
    [app.render-wasm.api.texts :as t]
    [app.render-wasm.deserializers :as dr]
@@ -32,9 +34,12 @@
    [app.render-wasm.performance :as perf]
    [app.render-wasm.serializers :as sr]
    [app.render-wasm.serializers.color :as sr-clr]
+   [app.render-wasm.svg-fills :as svg-fills]
+   ;; FIXME: rename; confunsing name
    [app.render-wasm.wasm :as wasm]
    [app.util.debug :as dbg]
    [app.util.functions :as fns]
+   [app.util.globals :as ug]
    [app.util.text.content :as tc]
    [beicon.v2.core :as rx]
    [promesa.core :as p]
@@ -57,6 +62,9 @@
 
 (def dpr
   (if use-dpr? (if (exists? js/window) js/window.devicePixelRatio 1.0) 1.0))
+
+(def noop-fn
+  (constantly nil))
 
 ;; Based on app.main.render/object-svg
 (mf/defc object-svg
@@ -85,16 +93,25 @@
   (when wasm/context-initialized?
     (h/call wasm/internal-module "_render" timestamp)
     (set! wasm/internal-frame-id nil)
-    ;; emit custom event
-    (let [event (js/CustomEvent. "wasm:render")]
-      (js/document.dispatchEvent ^js event))))
+    (ug/dispatch! (ug/event "penpot:wasm:render"))))
 
-(def set-view-render
-  (fns/debounce
-   (fn [ts]
-     (h/call wasm/internal-module "_set_view_end")
-     (render ts))
-   200))
+(defn render-sync
+  []
+  (when wasm/context-initialized?
+    (h/call wasm/internal-module "_render_sync")
+    (set! wasm/internal-frame-id nil)))
+
+(defn render-sync-shape
+  [id]
+  (when wasm/context-initialized?
+    (let [buffer (uuid/get-u32 id)]
+      (h/call wasm/internal-module "_render_sync_shape"
+              (aget buffer 0)
+              (aget buffer 1)
+              (aget buffer 2)
+              (aget buffer 3))
+      (set! wasm/internal-frame-id nil))))
+
 
 (defonce pending-render (atom false))
 
@@ -106,6 +123,17 @@
      (fn [ts]
        (reset! pending-render false)
        (render ts)))))
+
+(declare get-text-dimensions)
+
+(defn update-text-rect!
+  [id]
+  (when wasm/context-initialized?
+    (mw/emit!
+     {:cmd :index/update-text-rect
+      :page-id (:current-page-id @st/state)
+      :shape-id id
+      :dimensions (get-text-dimensions id)})))
 
 
 (defn- ensure-text-content
@@ -171,70 +199,71 @@
 (defn set-shape-children
   [children]
   (perf/begin-measure "set-shape-children")
-  (case (count children)
-    0
-    (h/call wasm/internal-module "_set_children_0")
+  (let [children (into [] (filter uuid?) children)]
+    (case (count children)
+      0
+      (h/call wasm/internal-module "_set_children_0")
 
-    1
-    (let [[c1] children
-          c1 (uuid/get-u32 c1)]
-      (h/call wasm/internal-module "_set_children_1"
-              (aget c1 0) (aget c1 1) (aget c1 2) (aget c1 3)))
+      1
+      (let [[c1] children
+            c1 (uuid/get-u32 c1)]
+        (h/call wasm/internal-module "_set_children_1"
+                (aget c1 0) (aget c1 1) (aget c1 2) (aget c1 3)))
 
-    2
-    (let [[c1 c2] children
-          c1 (uuid/get-u32 c1)
-          c2 (uuid/get-u32 c2)]
-      (h/call wasm/internal-module "_set_children_2"
-              (aget c1 0) (aget c1 1) (aget c1 2) (aget c1 3)
-              (aget c2 0) (aget c2 1) (aget c2 2) (aget c2 3)))
+      2
+      (let [[c1 c2] children
+            c1 (uuid/get-u32 c1)
+            c2 (uuid/get-u32 c2)]
+        (h/call wasm/internal-module "_set_children_2"
+                (aget c1 0) (aget c1 1) (aget c1 2) (aget c1 3)
+                (aget c2 0) (aget c2 1) (aget c2 2) (aget c2 3)))
 
-    3
-    (let [[c1 c2 c3] children
-          c1 (uuid/get-u32 c1)
-          c2 (uuid/get-u32 c2)
-          c3 (uuid/get-u32 c3)]
-      (h/call wasm/internal-module "_set_children_3"
-              (aget c1 0) (aget c1 1) (aget c1 2) (aget c1 3)
-              (aget c2 0) (aget c2 1) (aget c2 2) (aget c2 3)
-              (aget c3 0) (aget c3 1) (aget c3 2) (aget c3 3)))
+      3
+      (let [[c1 c2 c3] children
+            c1 (uuid/get-u32 c1)
+            c2 (uuid/get-u32 c2)
+            c3 (uuid/get-u32 c3)]
+        (h/call wasm/internal-module "_set_children_3"
+                (aget c1 0) (aget c1 1) (aget c1 2) (aget c1 3)
+                (aget c2 0) (aget c2 1) (aget c2 2) (aget c2 3)
+                (aget c3 0) (aget c3 1) (aget c3 2) (aget c3 3)))
 
-    4
-    (let [[c1 c2 c3 c4] children
-          c1 (uuid/get-u32 c1)
-          c2 (uuid/get-u32 c2)
-          c3 (uuid/get-u32 c3)
-          c4 (uuid/get-u32 c4)]
-      (h/call wasm/internal-module "_set_children_4"
-              (aget c1 0) (aget c1 1) (aget c1 2) (aget c1 3)
-              (aget c2 0) (aget c2 1) (aget c2 2) (aget c2 3)
-              (aget c3 0) (aget c3 1) (aget c3 2) (aget c3 3)
-              (aget c4 0) (aget c4 1) (aget c4 2) (aget c4 3)))
+      4
+      (let [[c1 c2 c3 c4] children
+            c1 (uuid/get-u32 c1)
+            c2 (uuid/get-u32 c2)
+            c3 (uuid/get-u32 c3)
+            c4 (uuid/get-u32 c4)]
+        (h/call wasm/internal-module "_set_children_4"
+                (aget c1 0) (aget c1 1) (aget c1 2) (aget c1 3)
+                (aget c2 0) (aget c2 1) (aget c2 2) (aget c2 3)
+                (aget c3 0) (aget c3 1) (aget c3 2) (aget c3 3)
+                (aget c4 0) (aget c4 1) (aget c4 2) (aget c4 3)))
 
-    5
-    (let [[c1 c2 c3 c4 c5] children
-          c1 (uuid/get-u32 c1)
-          c2 (uuid/get-u32 c2)
-          c3 (uuid/get-u32 c3)
-          c4 (uuid/get-u32 c4)
-          c5 (uuid/get-u32 c5)]
-      (h/call wasm/internal-module "_set_children_5"
-              (aget c1 0) (aget c1 1) (aget c1 2) (aget c1 3)
-              (aget c2 0) (aget c2 1) (aget c2 2) (aget c2 3)
-              (aget c3 0) (aget c3 1) (aget c3 2) (aget c3 3)
-              (aget c4 0) (aget c4 1) (aget c4 2) (aget c4 3)
-              (aget c5 0) (aget c5 1) (aget c5 2) (aget c5 3)))
+      5
+      (let [[c1 c2 c3 c4 c5] children
+            c1 (uuid/get-u32 c1)
+            c2 (uuid/get-u32 c2)
+            c3 (uuid/get-u32 c3)
+            c4 (uuid/get-u32 c4)
+            c5 (uuid/get-u32 c5)]
+        (h/call wasm/internal-module "_set_children_5"
+                (aget c1 0) (aget c1 1) (aget c1 2) (aget c1 3)
+                (aget c2 0) (aget c2 1) (aget c2 2) (aget c2 3)
+                (aget c3 0) (aget c3 1) (aget c3 2) (aget c3 3)
+                (aget c4 0) (aget c4 1) (aget c4 2) (aget c4 3)
+                (aget c5 0) (aget c5 1) (aget c5 2) (aget c5 3)))
 
-    ;; Dynamic call for children > 5
-    (let [heap   (mem/get-heap-u32)
-          size   (mem/get-alloc-size children UUID-U8-SIZE)
-          offset (mem/alloc->offset-32 size)]
-      (reduce
-       (fn [offset id]
-         (mem.h32/write-uuid offset heap id))
-       offset
-       children)
-      (h/call wasm/internal-module "_set_children")))
+      ;; Dynamic call for children > 5
+      (let [heap   (mem/get-heap-u32)
+            size   (mem/get-alloc-size children UUID-U8-SIZE)
+            offset (mem/alloc->offset-32 size)]
+        (reduce
+         (fn [offset id]
+           (mem.h32/write-uuid offset heap id))
+         offset
+         children)
+        (h/call wasm/internal-module "_set_children"))))
   (perf/end-measure "set-shape-children")
   nil)
 
@@ -276,6 +305,13 @@
     (aset textures new-id texture)
     new-id))
 
+(defn- retrieve-image
+  [url]
+  (rx/from
+   (-> (js/fetch url)
+       (p/then (fn [^js response] (.blob response)))
+       (p/then (fn [^js image] (js/createImageBitmap image))))))
+
 (defn- fetch-image
   "Loads an image and creates a WebGL texture from it, passing the texture ID to WASM.
    This avoids decoding the image twice (once in browser, once in WASM)."
@@ -283,56 +319,50 @@
   (let [url (cf/resolve-file-media {:id image-id} thumbnail?)]
     {:key url
      :thumbnail? thumbnail?
-     :callback #(->> (p/create
-                      (fn [resolve reject]
-                        (let [img (js/Image.)
-                              on-load (fn []
-                                        (resolve img))
-                              on-error (fn [err]
-                                         (reject err))]
-                          (set! (.-crossOrigin img) "anonymous")
-                          (.addEventListener img "load" on-load)
-                          (.addEventListener img "error" on-error)
-                          (set! (.-src img) url))))
-                     (rx/from)
-                     (rx/map (fn [img]
-                               (when-let [gl (get-webgl-context)]
-                                 (let [texture (create-webgl-texture-from-image gl img)
-                                       texture-id (get-texture-id-for-gl-object texture)
-                                       width  (.-width ^js img)
-                                       height (.-height ^js img)
-                                       ;; Header: 32 bytes (2 UUIDs) + 4 bytes (thumbnail) + 4 bytes (texture ID) + 8 bytes (dimensions)
-                                       total-bytes 48
-                                       offset (mem/alloc->offset-32 total-bytes)
-                                       heap32 (mem/get-heap-u32)]
+     :callback
+     (fn []
+       (->> (retrieve-image url)
+            (rx/map
+             (fn [img]
+               (when-let [gl (get-webgl-context)]
+                 (let [texture (create-webgl-texture-from-image gl img)
+                       texture-id (get-texture-id-for-gl-object texture)
+                       width  (.-width ^js img)
+                       height (.-height ^js img)
+                       ;; Header: 32 bytes (2 UUIDs) + 4 bytes (thumbnail)
+                       ;;     + 4 bytes (texture ID) + 8 bytes (dimensions)
+                       total-bytes 48
+                       offset (mem/alloc->offset-32 total-bytes)
+                       heap32 (mem/get-heap-u32)]
 
-                                   ;; 1. Set shape id (offset + 0 to offset + 3)
-                                   (mem.h32/write-uuid offset heap32 shape-id)
+                   ;; 1. Set shape id (offset + 0 to offset + 3)
+                   (mem.h32/write-uuid offset heap32 shape-id)
 
-                                   ;; 2. Set image id (offset + 4 to offset + 7)
-                                   (mem.h32/write-uuid (+ offset 4) heap32 image-id)
+                   ;; 2. Set image id (offset + 4 to offset + 7)
+                   (mem.h32/write-uuid (+ offset 4) heap32 image-id)
 
-                                   ;; 3. Set thumbnail flag as u32 (offset + 8)
-                                   (aset heap32 (+ offset 8) (if thumbnail? 1 0))
+                   ;; 3. Set thumbnail flag as u32 (offset + 8)
+                   (aset heap32 (+ offset 8) (if thumbnail? 1 0))
 
-                                   ;; 4. Set texture ID (offset + 9)
-                                   (aset heap32 (+ offset 9) texture-id)
+                   ;; 4. Set texture ID (offset + 9)
+                   (aset heap32 (+ offset 9) texture-id)
 
-                                   ;; 5. Set width (offset + 10)
-                                   (aset heap32 (+ offset 10) width)
+                   ;; 5. Set width (offset + 10)
+                   (aset heap32 (+ offset 10) width)
 
-                                   ;; 6. Set height (offset + 11)
-                                   (aset heap32 (+ offset 11) height)
+                   ;; 6. Set height (offset + 11)
+                   (aset heap32 (+ offset 11) height)
 
-                                   (h/call wasm/internal-module "_store_image_from_texture")
-                                   true))))
-                     (rx/catch (fn [cause]
-                                 (log/error :hint "Could not fetch image"
-                                            :image-id image-id
-                                            :thumbnail? thumbnail?
-                                            :url url
-                                            :cause cause)
-                                 (rx/empty))))}))
+                   (h/call wasm/internal-module "_store_image_from_texture")
+                   true))))
+            (rx/catch
+             (fn [cause]
+               (log/error :hint "Could not fetch image"
+                          :image-id image-id
+                          :thumbnail? thumbnail?
+                          :url url
+                          :cause cause)
+               (rx/empty)))))}))
 
 (defn- get-fill-images
   [leaf]
@@ -436,18 +466,18 @@
                 (h/call wasm/internal-module "_add_shape_stroke_fill")))))
         strokes))
 
-(defn set-shape-path-attrs
+(defn set-shape-svg-attrs
   [attrs]
   (let [style (:style attrs)
         ;; Filter to only supported attributes
-        allowed-keys #{:fill :fillRule :strokeLinecap :strokeLinejoin}
+        allowed-keys #{:fill :fillRule :fill-rule :strokeLinecap :stroke-linecap :strokeLinejoin :stroke-linejoin}
         attrs (-> attrs
                   (dissoc :style)
                   (merge style)
                   (select-keys allowed-keys))
-        fill-rule       (-> attrs :fillRule sr/translate-fill-rule)
-        stroke-linecap  (-> attrs :strokeLinecap sr/translate-stroke-linecap)
-        stroke-linejoin (-> attrs :strokeLinejoin sr/translate-stroke-linejoin)
+        fill-rule       (-> (or (:fill-rule attrs) (:fillRule attrs)) sr/translate-fill-rule)
+        stroke-linecap  (-> (or (:stroke-linecap attrs) (:strokeLinecap attrs)) sr/translate-stroke-linecap)
+        stroke-linejoin (-> (or (:stroke-linejoin attrs) (:strokeLinejoin attrs)) sr/translate-stroke-linejoin)
         fill-none       (= "none" (-> attrs :fill))]
     (h/call wasm/internal-module "_set_shape_svg_attrs" fill-rule stroke-linecap stroke-linejoin fill-none)))
 
@@ -711,7 +741,7 @@
 
             (d/nilv align-self 0)
             is-absolute
-            (d/nilv z-index))))
+            (d/nilv z-index 0))))
 
 (defn clear-layout
   []
@@ -813,14 +843,44 @@
          heapf32   (mem/get-heap-f32)
          width     (aget heapf32 (+ offset 0))
          height    (aget heapf32 (+ offset 1))
-         max-width (aget heapf32 (+ offset 2))]
+         max-width (aget heapf32 (+ offset 2))
+
+         x (aget heapf32 (+ offset 3))
+         y (aget heapf32 (+ offset 4))]
      (mem/free)
-     {:width width :height height :max-width max-width})))
+     {:x x :y y :width width :height height :max-width max-width})))
+
+(defn intersect-position-in-shape
+  [id position]
+  (let [buffer (uuid/get-u32 id)
+        result
+        (h/call wasm/internal-module "_intersect_position_in_shape"
+                (aget buffer 0)
+                (aget buffer 1)
+                (aget buffer 2)
+                (aget buffer 3)
+                (:x position)
+                (:y position))]
+    (= result 1)))
+
+(def render-finish
+  (letfn [(do-render [ts]
+            (h/call wasm/internal-module "_set_view_end")
+            (render ts))]
+    (fns/debounce do-render 100)))
+
+(def render-pan
+  (fns/throttle render 10))
 
 (defn set-view-box
-  [zoom vbox]
+  [prev-zoom zoom vbox]
   (h/call wasm/internal-module "_set_view" zoom (- (:x vbox)) (- (:y vbox)))
-  (set-view-render))
+
+  (if (mth/close? prev-zoom zoom)
+    (do (render-pan)
+        (render-finish))
+    (do (h/call wasm/internal-module "_render_from_cache" 0)
+        (render-finish))))
 
 (defn set-object
   [objects shape]
@@ -845,13 +905,7 @@
         ;; inherited by child nodes and emulates the behavior of
         ;; standard SVG, where a node without an explicit fill
         ;; defaults to black.
-        fills        (let [base-fills (get shape :fills)]
-                       (if (and ^boolean (contains? shape :svg-attrs)
-                                ^boolean (or ^boolean (= :svg-raw type)
-                                             ^boolean (= :group type))
-                                ^boolean (empty? base-fills))
-                         [{:fill-color "#000000" :fill-opacity 1}]
-                         base-fills))
+        fills        (svg-fills/resolve-shape-fills shape)
 
         strokes      (if (= type :group)
                        [] (get shape :strokes))
@@ -891,9 +945,9 @@
     (when (and (some? content)
                (or (= type :path)
                    (= type :bool)))
-      (when (some? svg-attrs)
-        (set-shape-path-attrs svg-attrs))
       (set-shape-path-content content))
+    (when (some? svg-attrs)
+      (set-shape-svg-attrs svg-attrs))
     (when (and (some? content) (= type :svg-raw))
       (set-shape-svg-raw-content (get-static-markup shape)))
     (when (some? shadows) (set-shape-shadows shadows))
@@ -922,48 +976,67 @@
   (->> shapes
        (filter cfh/text-shape?)
        (map :id)
-       (run! f/update-text-layout)))
+       (run!
+        (fn [id]
+          (f/update-text-layout id)
+          (mw/emit! {:cmd :index/update-text-rect
+                     :page-id (:current-page-id @st/state)
+                     :shape-id id
+                     :dimensions (get-text-dimensions id)})))))
 
-(defn process-pending!
-  [shapes thumbnails full]
-  (let [event (js/CustomEvent. "wasm:set-objects-finished")
-        pending-thumbnails (-> (d/index-by :key :callback thumbnails) vals)
-        pending-full (-> (d/index-by :key :callback full) vals)]
-    (->> (rx/concat
-          (->> (rx/from pending-thumbnails)
-               (rx/merge-map (fn [callback] (callback)))
-               (rx/reduce conj []))
-          (->> (rx/from pending-full)
-               (rx/mapcat (fn [callback] (callback)))
-               (rx/reduce conj [])
-               (rx/tap #(.dispatchEvent ^js js/document event))))
-         (rx/subs!
-          (fn [_]
-            (update-text-layouts shapes)
-            (request-render "pending-finished"))))))
+(defn process-pending
+  ([shapes thumbnails full on-complete]
+   (process-pending shapes thumbnails full nil on-complete))
+  ([shapes thumbnails full on-render on-complete]
+   (let [pending-thumbnails
+         (d/index-by :key :callback thumbnails)
+
+         pending-full
+         (d/index-by :key :callback full)]
+
+     (->> (rx/concat
+           (->> (rx/from (vals pending-thumbnails))
+                (rx/merge-map (fn [callback] (callback)))
+                (rx/reduce conj []))
+           (->> (rx/from (vals pending-full))
+                (rx/mapcat (fn [callback] (callback)))
+                (rx/reduce conj [])))
+          (rx/subs!
+           (fn [_]
+             (update-text-layouts shapes)
+             (if on-render
+               (on-render)
+               (request-render "pending-finished")))
+           noop-fn
+           on-complete)))))
 
 (defn process-object
   [shape]
   (let [{:keys [thumbnails full]} (set-object [] shape)]
-    (process-pending! [shape] thumbnails full)))
+    (process-pending [shape] thumbnails full noop-fn)))
 
 (defn set-objects
-  [objects]
-  (perf/begin-measure "set-objects")
-  (let [shapes        (into [] (vals objects))
-        total-shapes  (count shapes)
-        ;; Collect pending operations - set-object returns {:thumbnails [...] :full [...]}
-        {:keys [thumbnails full]}
-        (loop [index 0 thumbnails-acc [] full-acc []]
-          (if (< index total-shapes)
-            (let [shape    (nth shapes index)
-                  {:keys [thumbnails full]} (set-object objects shape)]
-              (recur (inc index)
-                     (into thumbnails-acc thumbnails)
-                     (into full-acc full)))
-            {:thumbnails thumbnails-acc :full full-acc}))]
-    (perf/end-measure "set-objects")
-    (process-pending! shapes thumbnails full)))
+  ([objects]
+   (set-objects objects nil))
+  ([objects render-callback]
+   (perf/begin-measure "set-objects")
+   (let [shapes        (into [] (vals objects))
+         total-shapes  (count shapes)
+         ;; Collect pending operations - set-object returns {:thumbnails [...] :full [...]}
+         {:keys [thumbnails full]}
+         (loop [index 0 thumbnails-acc [] full-acc []]
+           (if (< index total-shapes)
+             (let [shape    (nth shapes index)
+                   {:keys [thumbnails full]} (set-object objects shape)]
+               (recur (inc index)
+                      (into thumbnails-acc thumbnails)
+                      (into full-acc full)))
+             {:thumbnails thumbnails-acc :full full-acc}))]
+     (perf/end-measure "set-objects")
+     (process-pending shapes thumbnails full noop-fn
+                      (fn []
+                        (when render-callback (render-callback))
+                        (ug/dispatch! (ug/event "penpot:wasm:set-objects")))))))
 
 (defn clear-focus-mode
   []
@@ -1089,17 +1162,19 @@
 
         (request-render "set-modifiers")))))
 
-(defn initialize
-  [base-objects zoom vbox background]
-  (let [rgba         (sr-clr/hex->u32argb background 1)
-        shapes       (into [] (vals base-objects))
-        total-shapes (count shapes)]
-    (h/call wasm/internal-module "_set_canvas_background" rgba)
-    (h/call wasm/internal-module "_set_view" zoom (- (:x vbox)) (- (:y vbox)))
-    (h/call wasm/internal-module "_init_shapes_pool" total-shapes)
-    (set-objects base-objects)))
+(defn initialize-viewport
+  ([base-objects zoom vbox background]
+   (initialize-viewport base-objects zoom vbox background nil))
+  ([base-objects zoom vbox background callback]
+   (let [rgba         (sr-clr/hex->u32argb background 1)
+         shapes       (into [] (vals base-objects))
+         total-shapes (count shapes)]
+     (h/call wasm/internal-module "_set_canvas_background" rgba)
+     (h/call wasm/internal-module "_set_view" zoom (- (:x vbox)) (- (:y vbox)))
+     (h/call wasm/internal-module "_init_shapes_pool" total-shapes)
+     (set-objects base-objects callback))))
 
-(def ^:private context-options
+(def ^:private default-context-options
   #js {:antialias false
        :depth true
        :stencil true
@@ -1118,8 +1193,10 @@
 
 (defn set-canvas-size
   [canvas]
-  (set! (.-width canvas) (* dpr (.-clientWidth ^js canvas)))
-  (set! (.-height canvas) (* dpr (.-clientHeight ^js canvas))))
+  (let [width (or (.-clientWidth ^js canvas) (.-width ^js canvas))
+        height (or (.-clientHeight ^js canvas) (.-height ^js canvas))]
+    (set! (.-width canvas) (* dpr width))
+    (set! (.-height canvas) (* dpr height))))
 
 (defn- get-browser
   []
@@ -1133,13 +1210,12 @@
           (re-find #"(?i)edge" user-agent) :edge
           :else :unknown)))))
 
-
 (defn init-canvas-context
   [canvas]
   (let [gl      (unchecked-get wasm/internal-module "GL")
         flags   (debug-flags)
         context-id (if (dbg/enabled? :wasm-gl-context-init-error) "fail" "webgl2")
-        context (.getContext ^js canvas context-id context-options)
+        context (.getContext ^js canvas context-id default-context-options)
         context-init? (not (nil? context))
         browser (get-browser)
         browser (sr/translate-browser browser)]
@@ -1233,51 +1309,59 @@
       (mem/free)
       content)))
 
+
+(defn init-wasm-module
+  [module]
+  (let [default-fn (unchecked-get module "default")
+        serializers
+        #js
+         {:blur-type (unchecked-get module "RawBlurType")
+          :blend-mode (unchecked-get module "RawBlendMode")
+          :bool-type (unchecked-get module "RawBoolType")
+          :font-style (unchecked-get module "RawFontStyle")
+          :flex-direction (unchecked-get module "RawFlexDirection")
+          :grid-direction (unchecked-get module "RawGridDirection")
+          :grow-type (unchecked-get module "RawGrowType")
+          :align-items (unchecked-get module "RawAlignItems")
+          :align-self (unchecked-get module "RawAlignSelf")
+          :align-content (unchecked-get module "RawAlignContent")
+          :justify-items (unchecked-get module "RawJustifyItems")
+          :justify-content (unchecked-get module "RawJustifyContent")
+          :justify-self (unchecked-get module "RawJustifySelf")
+          :wrap-type (unchecked-get module "RawWrapType")
+          :grid-track-type (unchecked-get module "RawGridTrackType")
+          :shadow-style (unchecked-get module "RawShadowStyle")
+          :stroke-style (unchecked-get module "RawStrokeStyle")
+          :stroke-cap (unchecked-get module "RawStrokeCap")
+          :shape-type (unchecked-get module "RawShapeType")
+          :constraint-h (unchecked-get module "RawConstraintH")
+          :constraint-v (unchecked-get module "RawConstraintV")
+          :sizing (unchecked-get module "RawSizing")
+          :vertical-align (unchecked-get module "RawVerticalAlign")
+          :fill-data (unchecked-get module "RawFillData")
+          :text-align (unchecked-get module "RawTextAlign")
+          :text-direction (unchecked-get module "RawTextDirection")
+          :text-decoration (unchecked-get module "RawTextDecoration")
+          :text-transform (unchecked-get module "RawTextTransform")
+          :segment-data (unchecked-get module "RawSegmentData")
+          :stroke-linecap (unchecked-get module "RawStrokeLineCap")
+          :stroke-linejoin (unchecked-get module "RawStrokeLineJoin")
+          :fill-rule (unchecked-get module "RawFillRule")}]
+    (set! wasm/serializers serializers)
+    (default-fn)))
+
 (defonce module
   (delay
     (if (exists? js/dynamicImport)
       (let [uri (cf/resolve-static-asset "js/render_wasm.js")]
         (->> (js/dynamicImport (str uri))
-             (p/mcat (fn [module]
-                       (let [default (unchecked-get module "default")
-                             serializers #js{:blur-type (unchecked-get module "RawBlurType")
-                                             :blend-mode (unchecked-get module "RawBlendMode")
-                                             :bool-type (unchecked-get module "RawBoolType")
-                                             :font-style (unchecked-get module "RawFontStyle")
-                                             :flex-direction (unchecked-get module "RawFlexDirection")
-                                             :grid-direction (unchecked-get module "RawGridDirection")
-                                             :grow-type (unchecked-get module "RawGrowType")
-                                             :align-items (unchecked-get module "RawAlignItems")
-                                             :align-self (unchecked-get module "RawAlignSelf")
-                                             :align-content (unchecked-get module "RawAlignContent")
-                                             :justify-items (unchecked-get module "RawJustifyItems")
-                                             :justify-content (unchecked-get module "RawJustifyContent")
-                                             :justify-self (unchecked-get module "RawJustifySelf")
-                                             :wrap-type (unchecked-get module "RawWrapType")
-                                             :grid-track-type (unchecked-get module "RawGridTrackType")
-                                             :shadow-style (unchecked-get module "RawShadowStyle")
-                                             :stroke-style (unchecked-get module "RawStrokeStyle")
-                                             :stroke-cap (unchecked-get module "RawStrokeCap")
-                                             :shape-type (unchecked-get module "RawShapeType")
-                                             :constraint-h (unchecked-get module "RawConstraintH")
-                                             :constraint-v (unchecked-get module "RawConstraintV")
-                                             :sizing (unchecked-get module "RawSizing")
-                                             :vertical-align (unchecked-get module "RawVerticalAlign")
-                                             :fill-data (unchecked-get module "RawFillData")
-                                             :text-align (unchecked-get module "RawTextAlign")
-                                             :text-direction (unchecked-get module "RawTextDirection")
-                                             :text-decoration (unchecked-get module "RawTextDecoration")
-                                             :text-transform (unchecked-get module "RawTextTransform")
-                                             :segment-data (unchecked-get module "RawSegmentData")
-                                             :stroke-linecap (unchecked-get module "RawStrokeLineCap")
-                                             :stroke-linejoin (unchecked-get module "RawStrokeLineJoin")
-                                             :fill-rule (unchecked-get module "RawFillRule")}]
-                         (set! wasm/serializers serializers)
-                         (default))))
-             (p/fmap (fn [default]
-                       (set! wasm/internal-module default)
-                       true))
-             (p/merr (fn [cause]
-                       (js/console.error cause)
-                       (p/resolved false)))))
+             (p/mcat init-wasm-module)
+             (p/fmap
+              (fn [default]
+                (set! wasm/internal-module default)
+                true))
+             (p/merr
+              (fn [cause]
+                (js/console.error cause)
+                (p/resolved false)))))
       (p/resolved false))))

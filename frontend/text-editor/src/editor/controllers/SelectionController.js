@@ -39,6 +39,8 @@ import {
   replaceWith,
   insertInto,
   removeSlice,
+  findPreviousWordBoundary,
+  removeWordBackward,
 } from "../content/Text.js";
 import {
   getTextNodeLength,
@@ -51,12 +53,13 @@ import CommandMutations from "../commands/CommandMutations.js";
 import { isRoot, setRootStyles } from "../content/dom/Root.js";
 import { SelectionDirection } from "./SelectionDirection.js";
 import SafeGuard from "./SafeGuard.js";
+import { sanitizeFontFamily } from "../content/dom/Style.js";
 
 /**
  * Supported options for the SelectionController.
  *
  * @typedef {Object} SelectionControllerOptions
- * @property {Object} [debug] An object with references to DOM elements that will keep all the debugging values.
+ * @property {SelectionControllerDebug} [debug] An object with references to DOM elements that will keep all the debugging values.
  */
 
 /**
@@ -202,6 +205,11 @@ export class SelectionController extends EventTarget {
   #fixInsertCompositionText = false;
 
   /**
+   * @type {TextEditorOptions}
+   */
+  #options;
+
+  /**
    * Constructor
    *
    * @param {TextEditor} textEditor
@@ -217,6 +225,7 @@ export class SelectionController extends EventTarget {
       throw new TypeError("Invalid EventTarget");
     }
     */
+    this.#options = options;
     this.#debug = options?.debug;
     this.#styleDefaults = options?.styleDefaults;
     this.#selection = selection;
@@ -234,6 +243,15 @@ export class SelectionController extends EventTarget {
    */
   get currentStyle() {
     return this.#currentStyle;
+  }
+
+  /**
+   * Text editor options.
+   *
+   * @type {TextEditorOptions}
+   */
+  get options() {
+    return this.#options;
   }
 
   /**
@@ -260,7 +278,12 @@ export class SelectionController extends EventTarget {
   #applyStylesToCurrentStyle(element) {
     for (let index = 0; index < element.style.length; index++) {
       const styleName = element.style.item(index);
-      const styleValue = element.style.getPropertyValue(styleName);
+
+      let styleValue = element.style.getPropertyValue(styleName);
+      if (styleName === "font-family") {
+        styleValue = sanitizeFontFamily(styleValue);
+      }
+
       this.#currentStyle.setProperty(styleName, styleValue);
     }
   }
@@ -502,7 +525,51 @@ export class SelectionController extends EventTarget {
     if (this.#textEditor.isEmpty) {
       return this;
     }
-    this.#selection.selectAllChildren(this.#textEditor.root);
+
+    // Find the first and last text nodes to create a proper text selection
+    // instead of selecting container elements
+    const root = this.#textEditor.root;
+    const firstParagraph = root.firstElementChild;
+    const lastParagraph = root.lastElementChild;
+
+    if (!firstParagraph || !lastParagraph) {
+      return this;
+    }
+
+    const firstTextSpan = firstParagraph.firstElementChild;
+    const lastTextSpan = lastParagraph.lastElementChild;
+
+    if (!firstTextSpan || !lastTextSpan) {
+      return this;
+    }
+
+    const firstTextNode = firstTextSpan.firstChild;
+    const lastTextNode = lastTextSpan.lastChild;
+
+    if (!firstTextNode || !lastTextNode) {
+      return this;
+    }
+
+    // Create a range from first text node to last text node
+    const range = document.createRange();
+    range.setStart(firstTextNode, 0);
+    range.setEnd(lastTextNode, lastTextNode.nodeValue?.length || 0);
+
+    this.#selection.removeAllRanges();
+    this.#selection.addRange(range);
+
+    // Ensure internal state is synchronized
+    this.#focusNode = this.#selection.focusNode;
+    this.#focusOffset = this.#selection.focusOffset;
+    this.#anchorNode = this.#selection.anchorNode;
+    this.#anchorOffset = this.#selection.anchorOffset;
+    this.#range = range;
+    this.#ranges.clear();
+    this.#ranges.add(range);
+
+    // Notify style changes
+    this.#notifyStyleChange();
+
     return this;
   }
 
@@ -722,7 +789,6 @@ export class SelectionController extends EventTarget {
     if (this.#savedSelection) {
       return this.#savedSelection.focusNode;
     }
-    if (!this.#focusNode) console.trace("focusNode", this.#focusNode);
     return this.#focusNode;
   }
 
@@ -1095,12 +1161,17 @@ export class SelectionController extends EventTarget {
       this.focusParagraph.after(fragment);
       mergeParagraphs(a, b);
     } else {
-      const newParagraph = splitParagraph(
-        this.focusParagraph,
-        this.focusTextSpan,
-        this.focusOffset,
-      );
-      this.focusParagraph.after(fragment, newParagraph);
+      if (this.isTextSpanStart) {
+        this.focusTextSpan.before(...fragment.firstElementChild.children);
+      } else if (this.isTextSpanEnd) {
+        this.focusTextSpan.after(...fragment.firstElementChild.children);
+      } else {
+        const newTextSpan = splitTextSpan(this.focusTextSpan, this.focusOffset);
+        this.focusTextSpan.after(
+          ...fragment.firstElementChild.children,
+          newTextSpan,
+        );
+      }
     }
     if (isLineBreak(collapseNode)) {
       return this.collapse(collapseNode, 0);
@@ -1216,6 +1287,82 @@ export class SelectionController extends EventTarget {
     }
 
     return this.collapse(this.focusNode, this.focusOffset - 1);
+  }
+
+  /**
+   * Removes word backward from the current caret position.
+   */
+  removeWordBackward() {
+    if (!this.isCollapsed) {
+      return this.removeSelected();
+    }
+
+    this.#textNodeIterator.currentNode = this.focusNode;
+
+    const originalNodeValue = this.focusNode.nodeValue || "";
+    const wordStart = findPreviousWordBoundary(
+      originalNodeValue,
+      this.focusOffset,
+    );
+
+    // Start node
+    if (wordStart === this.focusOffset && this.focusOffset === 0) {
+      if (this.focusTextSpan.previousElementSibling) {
+        const prevTextSpan = this.focusTextSpan.previousElementSibling;
+        const prevTextNode = prevTextSpan.lastChild;
+        if (prevTextNode && prevTextNode.nodeType === Node.TEXT_NODE) {
+          this.collapse(prevTextNode, prevTextNode.nodeValue.length);
+          return this.removeWordBackward();
+        }
+      } else if (this.focusParagraph.previousElementSibling) {
+        // Move to previous paragraph
+        const prevParagraph = this.focusParagraph.previousElementSibling;
+        const prevTextSpan = prevParagraph.lastElementChild;
+        const prevTextNode = prevTextSpan?.lastChild;
+        if (prevTextNode && prevTextNode.nodeType === Node.TEXT_NODE) {
+          this.collapse(prevTextNode, prevTextNode.nodeValue.length);
+          return this.removeWordBackward();
+        } else {
+          return this.mergeBackwardParagraph();
+        }
+      }
+      return this;
+    }
+
+    const removedData = removeWordBackward(originalNodeValue, this.focusOffset);
+
+    if (this.focusNode.nodeValue !== removedData) {
+      this.focusNode.nodeValue = removedData;
+      this.#mutations.update(this.focusTextSpan);
+    }
+
+    const paragraph = this.focusParagraph;
+    if (!paragraph) throw new Error("Cannot find paragraph");
+    const textSpan = this.focusTextSpan;
+    if (!textSpan) throw new Error("Cannot find text span");
+
+    // If the text node is empty, handle cleanup
+    if (this.focusNode.nodeValue === "") {
+      const previousTextNode = this.#textNodeIterator.previousNode();
+      this.focusNode.remove();
+
+      if (paragraph.children.length === 1 && textSpan.childNodes.length === 0) {
+        const lineBreak = createLineBreak();
+        textSpan.appendChild(lineBreak);
+        return this.collapse(lineBreak, 0);
+      } else if (
+        paragraph.children.length > 1 &&
+        textSpan.childNodes.length === 0
+      ) {
+        textSpan.remove();
+        return this.collapse(
+          previousTextNode,
+          getTextNodeLength(previousTextNode),
+        );
+      }
+    }
+
+    return this.collapse(this.focusNode, wordStart);
   }
 
   /**

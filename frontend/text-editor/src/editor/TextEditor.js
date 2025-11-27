@@ -23,6 +23,13 @@ import { isLineBreak } from "./content/dom/LineBreak.js";
 import LayoutType from "./layout/LayoutType.js";
 
 /**
+ * @typedef {Object} TextEditorOptions
+ * @property {CSSStyleDeclaration|Object.<string,*>} [styleDefaults]
+ * @property {SelectionControllerDebug} [debug]
+ * @property {boolean} [allowHTMLPaste=false]
+ */
+
+/**
  * Text Editor.
  */
 export class TextEditor extends EventTarget {
@@ -73,6 +80,8 @@ export class TextEditor extends EventTarget {
    * `beforeinput` and `input` have different `data` when
    * characters are deleted when the input type is
    * `insertCompositionText`.
+   *
+   * @type {boolean}
    */
   #fixInsertCompositionText = false;
 
@@ -88,6 +97,7 @@ export class TextEditor extends EventTarget {
    *
    * @param {HTMLElement} element
    * @param {HTMLCanvasElement} canvas
+   * @param {TextEditorOptions} [options]
    */
   constructor(element, canvas, options) {
     super();
@@ -106,6 +116,7 @@ export class TextEditor extends EventTarget {
 
       beforeinput: this.#onBeforeInput,
       input: this.#onInput,
+      keydown: this.#onKeyDown,
     };
     this.#styleDefaults = options?.styleDefaults;
     this.#setup(options);
@@ -198,7 +209,7 @@ export class TextEditor extends EventTarget {
     const rotation = transform?.rotation ?? 0.0;
     const scale = transform?.scale ?? 1.0;
     this.#updatePositionFromCanvas();
-    this.#element.style.transformOrigin = 'top left';
+    this.#element.style.transformOrigin = "top left";
     this.#element.style.transform = `scale(${scale}) translate(${x}px, ${y}px) rotate(${rotation}deg)`;
   }
 
@@ -214,7 +225,7 @@ export class TextEditor extends EventTarget {
       y: viewport.y + shape.selrect.y,
       rotation: shape.rotation,
       scale: viewport.zoom,
-    })
+    });
   }
 
   /**
@@ -360,6 +371,36 @@ export class TextEditor extends EventTarget {
 
     if (e.inputType === "insertCompositionText" && e.data) {
       this.#notifyLayout(LayoutType.FULL, null);
+    }
+  };
+
+  /**
+   * Handles keydown events
+   *
+   * @param {KeyboardEvent} e
+   */
+  #onKeyDown = (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+      e.preventDefault();
+      this.selectAll();
+      return;
+    }
+
+    if ((e.ctrlKey || e.metaKey) && e.key === "Backspace") {
+      e.preventDefault();
+
+      if (!this.#selectionController.startMutation()) {
+        return;
+      }
+
+      if (this.#selectionController.isCollapsed) {
+        this.#selectionController.removeWordBackward();
+      } else {
+        this.#selectionController.removeSelected();
+      }
+
+      const mutations = this.#selectionController.endMutation();
+      this.#notifyLayout(LayoutType.FULL, mutations);
     }
   };
 
@@ -547,14 +588,26 @@ export class TextEditor extends EventTarget {
   }
 }
 
-export function createRootFromHTML(html, style = undefined) {
-  const fragment = mapContentFragmentFromHTML(html, style || undefined);
+/**
+ *
+ * @param {string} html
+ * @param {*} style
+ * @param {boolean} allowHTMLPaste
+ * @returns {Root}
+ */
+export function createRootFromHTML(html, style = undefined, allowHTMLPaste = undefined) {
+  const fragment = mapContentFragmentFromHTML(html, style || undefined, allowHTMLPaste || undefined);
   const root = createRoot([], style);
   root.replaceChildren(fragment);
   resetInertElement();
   return root;
 }
 
+/**
+ *
+ * @param {string} string
+ * @returns {Root}
+ */
 export function createRootFromString(string) {
   const fragment = mapContentFragmentFromString(string);
   const root = createRoot([]);

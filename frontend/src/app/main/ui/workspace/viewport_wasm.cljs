@@ -66,9 +66,9 @@
 (defn apply-modifiers-to-selected
   [selected objects modifiers]
   (->> modifiers
-       (filter #(contains? selected (:id %)))
+       (filter #(contains? selected (first %)))
        (reduce
-        (fn [objects {:keys [id transform]}]
+        (fn [objects [id transform]]
           (update objects id gsh/apply-transform transform))
         objects)))
 
@@ -159,6 +159,8 @@
                                  (get base-objects parent-id)))))
 
         zoom              (d/check-num zoom 1)
+        prev-zoom         (mf/use-ref zoom)
+
         drawing-tool      (:tool drawing)
         drawing-obj       (:object drawing)
 
@@ -323,7 +325,7 @@
 
     (mf/with-effect [@canvas-init? zoom vbox background]
       (when (and @canvas-init? (not @initialized?))
-        (wasm.api/initialize base-objects zoom vbox background)
+        (wasm.api/initialize-viewport base-objects zoom vbox background)
         (reset! initialized? true)))
 
     (mf/with-effect [focus]
@@ -334,7 +336,8 @@
 
     (mf/with-effect [vbox zoom]
       (when (and @canvas-init? initialized?)
-        (wasm.api/set-view-box zoom vbox)))
+        (wasm.api/set-view-box (mf/ref-val prev-zoom) zoom vbox))
+      (mf/set-ref-val! prev-zoom zoom))
 
     (mf/with-effect [background]
       (when (and @canvas-init? initialized?)

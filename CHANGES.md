@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## 2.13.0 (Unreleased)
+
+### :boom: Breaking changes & Deprecations
+
+### :rocket: Epics and highlights
+
+### :heart: Community contributions (Thank you!)
+
+### :sparkles: New features & Enhancements
+
+### :bug: Bugs fixed
+
+
 ## 2.12.0 (Unreleased)
 
 ### :boom: Breaking changes & Deprecations
@@ -7,7 +20,7 @@
 #### Backend RPC API changes
 
 The backend RPC API URLS are changed from `/api/rpc/command/<name>` to
-`/api/main/methods/<name>` (the previou PATH is preserved for backward
+`/api/main/methods/<name>`. The previous PATH is preserved for backward
 compatibility; however, if you are a user of this API, it is strongly
 recommended that you adapt your code to use the new PATH.
 
@@ -35,7 +48,7 @@ If you have SSO/Social-Auth configured on your on-premise instance,
 the following actions are required before update:
 
 Update your OAuth or SSO provider configuration (e.g., Okta, Google,
-Azure AD, etc.) to use the new callback URL.  Failure to update may
+Azure AD, etc.) to use the new callback URL. Failure to update may
 result in authentication failures after upgrading.
 
 **Reason for change:**
@@ -45,14 +58,33 @@ and makis it more modular, enabling the ability to configure SSO auth
 provider dinamically.
 
 
+#### Changes on default docker compose
+
+We have updated the `docker/images/docker-compose.yaml` with a small
+change related to the `PENPOT_SECRET_KEY`. Since this version, this
+environment variable is also required on exporter. So if you are using
+penpot on-premise you will need to apply the same changes on your own
+`docker-compose.yaml` file.
+
+We have removed the Minio server from the `docker/images/docker-compose.yml`
+example. It's still usable as before, we just removed the example.
+
 ### :rocket: Epics and highlights
 
 ### :heart: Community contributions (Thank you!)
 
+- Ensure consistent snap behavior across all zoom levels [Github #7774](https://github.com/penpot/penpot/pull/7774) by [@Tokytome](https://github.com/Tokytome)
+
 ### :sparkles: New features & Enhancements
 
-- Select boards to export as PDF [Taiga #12320](https://tree.taiga.io/project/penpot/issue/12320)
-- Toggle for switching boolean property values [Taiga #12341](https://tree.taiga.io/project/penpot/us/12341)
+- Add the ability to select boards to export as PDF [Taiga #12320](https://tree.taiga.io/project/penpot/issue/12320)
+- Add toggle for switching boolean property values [Taiga #12341](https://tree.taiga.io/project/penpot/us/12341)
+- Make the file export process more reliable [Taiga #12555](https://tree.taiga.io/project/penpot/us/12555)
+- Add auth flow changes [Taiga #12333](https://tree.taiga.io/project/penpot/us/12333)
+- Add new shape validation mechanism for shapes [Github #7696](https://github.com/penpot/penpot/pull/7696)
+- Apply color tokens from sidebar [Taiga #11353](https://tree.taiga.io/project/penpot/us/11353)
+- Display tokens in the inspect tab [Taiga #9313](https://tree.taiga.io/project/penpot/us/9313)
+- Refactor clipboard behavior to assess some minor inconsistencies and make pasting binary data faster. [Taiga #12571](https://tree.taiga.io/project/penpot/task/12571)
 
 ### :bug: Bugs fixed
 
@@ -67,6 +99,11 @@ provider dinamically.
 - Fix shortcut conflict in text editor (increase/decrease font size vs word selection)
 - Fix problem with plugins generating code for pages different than current one [Taiga #12312](https://tree.taiga.io/project/penpot/issue/12312)
 - Fix input confirmation behavior is not uniform [Taiga #12294](https://tree.taiga.io/project/penpot/issue/12294)
+- Fix copy/pasting application/transit+json [Taiga #12721](https://tree.taiga.io/project/penpot/issue/12721)
+
+## 2.11.1
+
+- Fix WEBP shape export on docker images [Taiga #3838](https://tree.taiga.io/project/penpot/issue/3838)
 
 ## 2.11.0
 

@@ -14,7 +14,9 @@
    [app.config :as cf]
    [app.http :as-alias http]
    [app.http.errors :as errors]
+   [app.tokens :as tokens]
    [app.util.pointer-map :as pmap]
+   [buddy.core.codecs :as bc]
    [cuerdas.core :as str]
    [yetti.adapter :as yt]
    [yetti.middleware :as ymw]
@@ -242,7 +244,6 @@
                (handler request)
                {::yres/status 405}))))))})
 
-
 (defn- wrap-auth
   [handler decoders]
   (let [token-re
@@ -272,9 +273,24 @@
         process-request
         (fn [request]
           (if-let [{:keys [type token] :as auth} (get-token request)]
-            (if-let [decode-fn (get decoders type)]
-              (assoc request ::http/auth-data (assoc auth :claims (decode-fn token)))
-              (assoc request ::http/auth-data auth))
+            (let [decode-fn (get decoders type)]
+              (if (or (= type :cookie) (= type :bearer))
+                (let [metadata (tokens/decode-header token)]
+                  ;; NOTE: we only proceed to decode claims on new
+                  ;; cookie tokens. The old cookies dont need to be
+                  ;; decoded because they use the token string as ID
+                  (if (and (= (:kid metadata) 1)
+                           (= (:ver metadata) 1)
+                           (some? decode-fn))
+                    (assoc request ::http/auth-data (assoc auth
+                                                           :claims (decode-fn token)
+                                                           :metadata metadata))
+                    (assoc request ::http/auth-data (assoc auth :metadata {:ver 0}))))
+
+                (if decode-fn
+                  (assoc request ::http/auth-data (assoc auth :claims (decode-fn token)))
+                  (assoc request ::http/auth-data auth))))
+
             request))]
 
     (fn [request]
@@ -287,11 +303,14 @@
 (defn- wrap-shared-key-auth
   [handler shared-key]
   (if shared-key
-    (fn [request]
-      (let [key (yreq/get-header request "x-shared-key")]
-        (if (= key shared-key)
-          (handler request)
-          {::yres/status 403})))
+    (let [shared-key (if (string? shared-key)
+                       shared-key
+                       (bc/bytes->b64-str shared-key true))]
+      (fn [request]
+        (let [key (yreq/get-header request "x-shared-key")]
+          (if (= key shared-key)
+            (handler request)
+            {::yres/status 403}))))
     (fn [_ _]
       {::yres/status 403})))
 

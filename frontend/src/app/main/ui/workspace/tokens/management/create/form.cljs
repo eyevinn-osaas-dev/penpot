@@ -8,7 +8,6 @@
   (:require-macros [app.main.style :as stl])
   (:require
    [app.common.data :as d]
-   [app.common.data.macros :as dm]
    [app.common.files.tokens :as cft]
    [app.common.schema :as sm]
    [app.common.types.color :as c]
@@ -36,8 +35,12 @@
    [app.main.ui.workspace.colorpicker :as colorpicker]
    [app.main.ui.workspace.colorpicker.ramp :refer [ramp-selector*]]
    [app.main.ui.workspace.sidebar.options.menus.typography :refer [font-selector*]]
+   [app.main.ui.workspace.tokens.management.create.border-radius :as border-radius]
+   [app.main.ui.workspace.tokens.management.create.color :as color]
+   [app.main.ui.workspace.tokens.management.create.dimensions :as dimensions]
    [app.main.ui.workspace.tokens.management.create.input-token-color-bullet :refer [input-token-color-bullet*]]
    [app.main.ui.workspace.tokens.management.create.input-tokens-value :refer [input-token* token-value-hint*]]
+   [app.main.ui.workspace.tokens.management.create.text-case :as text-case]
    [app.util.dom :as dom]
    [app.util.functions :as uf]
    [app.util.i18n :refer [tr]]
@@ -69,6 +72,12 @@
    [:fn {:error/fn #(tr "workspace.tokens.token-name-duplication-validation-error" (:value %))}
     #(not (cft/token-name-path-exists? % tokens-tree))]])
 
+(defn validate-token-name
+  [tokens-tree name]
+  (let [schema    (make-token-name-schema tokens-tree)
+        explainer (sm/explainer schema)]
+    (-> name explainer sm/simplify not-empty)))
+
 (def ^:private schema:token-description
   [:string {:max 2048 :error/fn #(tr "errors.field-max-length" 2048)}])
 
@@ -89,9 +98,6 @@
 (defn check-self-reference [token-name token-value]
   (when (cto/token-value-self-reference? token-name token-value)
     (wte/get-error-code :error.token/direct-self-reference)))
-
-(defn check-token-self-reference [token]
-  (check-self-reference (:name token) (:value token)))
 
 (defn validate-resolve-token
   [token prev-token tokens]
@@ -363,27 +369,20 @@
               ;; Allow setting editing token to it's own path
               (d/dissoc-in token-path)))
 
-        validate-token-name
-        (mf/with-memo [tokens-tree-in-selected-set]
-          (let [schema    (make-token-name-schema tokens-tree-in-selected-set)
-                explainer (sm/explainer schema)]
-            (fn [name]
-              (-> name explainer sm/simplify not-empty))))
-
         on-blur-name
         (mf/use-fn
-         (mf/deps touched-name? validate-token-name)
+         (mf/deps touched-name?)
          (fn [e]
            (let [value  (dom/get-target-val e)
-                 errors (validate-token-name value)]
+                 errors (validate-token-name tokens-tree-in-selected-set value)]
              (when touched-name? (reset! warning-name-change* true))
              (reset! name-errors* errors))))
 
         on-update-name-debounced
-        (mf/with-memo [touched-name? validate-token-name]
+        (mf/with-memo [touched-name?]
           (uf/debounce (fn [token-name]
                          (when touched-name?
-                           (reset! name-errors* (validate-token-name token-name))))
+                           (reset! name-errors* (validate-token-name tokens-tree-in-selected-set token-name))))
                        300))
 
         on-update-name
@@ -487,7 +486,7 @@
 
         on-submit
         (mf/use-fn
-         (mf/deps is-create token active-theme-tokens validate-token validate-token-name validate-token-description)
+         (mf/deps is-create token active-theme-tokens validate-token validate-token-description)
          (fn [e]
            (dom/prevent-default e)
            ;; We have to re-validate the current form values before submitting
@@ -496,7 +495,7 @@
            ;; and press enter before the next validations could return.
 
            (let [clean-name         (clean-name (mf/ref-val token-name-ref))
-                 valid-name?        (empty? (validate-token-name clean-name))
+                 valid-name?        (empty? (validate-token-name tokens-tree-in-selected-set clean-name))
 
                  value              (mf/ref-val value-ref)
                  clean-description  (mf/ref-val description-ref)
@@ -512,10 +511,10 @@
                      (fn [valid-token]
                        (st/emit!
                         (if is-create
-                          (dwtl/create-token {:name clean-name
-                                              :type token-type
-                                              :value (:value valid-token)
-                                              :description clean-description})
+                          (dwtl/create-token (ctob/make-token {:name clean-name
+                                                               :type token-type
+                                                               :value (:value valid-token)
+                                                               :description clean-description}))
 
                           (dwtl/update-token (:id token)
                                              {:name clean-name
@@ -911,40 +910,6 @@
          :on-change on-change'}])
      [:> token-value-hint* {:result token-resolve-result}]]))
 
-(mf/defc color-form*
-  [{:keys [token on-display-colorpicker] :rest props}]
-  (let [color* (mf/use-state (:value token))
-        color (deref color*)
-        on-value-resolve (mf/use-fn
-                          (mf/deps color)
-                          (fn [value]
-                            (reset! color* value)
-                            value))
-
-        custom-input-token-value-props
-        (mf/use-memo
-         (mf/deps color on-display-colorpicker)
-         (fn []
-           {:color color
-            :on-display-colorpicker on-display-colorpicker}))
-
-        on-get-token-value
-        (mf/use-fn
-         (fn [e]
-           (let [value (dom/get-target-val e)]
-             (if (tinycolor/hex-without-hash-prefix? value)
-               (let [hex-value (dm/str "#" value)]
-                 (dom/set-value! (dom/get-target e) hex-value)
-                 hex-value)
-               value))))]
-
-    [:> form*
-     (mf/spread-props props {:token token
-                             :on-get-token-value on-get-token-value
-                             :on-value-resolve on-value-resolve
-                             :custom-input-token-value color-picker*
-                             :custom-input-token-value-props custom-input-token-value-props})]))
-
 (mf/defc shadow-color-picker-wrapper*
   "Wrapper for color-picker* that passes shadow color state from parent.
    Similar to color-form* but receives color state from shadow-value-inputs*."
@@ -1309,12 +1274,6 @@
                              :on-value-resolve on-value-resolve
                              :validate-token validate-font-family-token})]))
 
-(mf/defc text-case-form*
-  [{:keys [token] :rest props}]
-  [:> form*
-   (mf/spread-props props {:token token
-                           :input-value-placeholder (tr "workspace.tokens.text-case-value-enter")})])
-
 (mf/defc text-decoration-form*
   [{:keys [token] :rest props}]
   [:> form*
@@ -1456,15 +1415,38 @@
 
 (mf/defc form-wrapper*
   [{:keys [token token-type] :rest props}]
-  (let [token-type' (or (:type token) token-type)
-        props (mf/spread-props props {:token-type token-type'
-                                      :token token})]
-    (case token-type'
-      :color [:> color-form* props]
+  (let [token-type
+        (or (:type token) token-type)
+        ;; NOTE: All this references to tokens can be
+        ;; provided via context for
+        ;; avoid duplicate code among each form, this is because it is
+        ;; a common code and is probably will be needed on all forms
+
+        tokens-in-selected-set
+        (mf/deref refs/workspace-all-tokens-in-selected-set)
+
+        token-path
+        (mf/with-memo [token]
+          (cft/token-name->path (:name token)))
+
+        tokens-tree-in-selected-set
+        (mf/with-memo [token-path tokens-in-selected-set]
+          (-> (ctob/tokens-tree tokens-in-selected-set)
+              (d/dissoc-in token-path)))
+        props
+        (mf/spread-props props {:token-type token-type
+                                :validate-token default-validate-token
+                                :tokens-tree-in-selected-set tokens-tree-in-selected-set
+                                :token token})]
+
+    (case token-type
+      :color [:> color/form* props]
       :typography [:> typography-form* props]
       :shadow [:> shadow-form* props]
       :font-family [:> font-family-form* props]
-      :text-case [:> text-case-form* props]
+      :text-case [:> text-case/form* props]
       :text-decoration [:> text-decoration-form* props]
       :font-weight [:> font-weight-form* props]
+      :border-radius [:> border-radius/form* props]
+      :dimensions [:> dimensions/form* props]
       [:> form* props])))

@@ -150,8 +150,30 @@ pub extern "C" fn render(_: i32) {
 }
 
 #[no_mangle]
+pub extern "C" fn render_sync() {
+    with_state_mut!(state, {
+        state.rebuild_tiles();
+        state
+            .render_sync(performance::get_time())
+            .expect("Error rendering");
+    });
+}
+
+#[no_mangle]
+pub extern "C" fn render_sync_shape(a: u32, b: u32, c: u32, d: u32) {
+    with_state_mut!(state, {
+        let id = uuid_from_u32_quartet(a, b, c, d);
+        state.rebuild_tiles_from(Some(&id));
+        state
+            .render_sync_shape(&id, performance::get_time())
+            .expect("Error rendering");
+    });
+}
+
+#[no_mangle]
 pub extern "C" fn render_from_cache(_: i32) {
     with_state_mut!(state, {
+        state.render_state.cancel_animation_frame();
         state.render_from_cache();
     });
 }
@@ -196,9 +218,7 @@ pub extern "C" fn resize_viewbox(width: i32, height: i32) {
 pub extern "C" fn set_view(zoom: f32, x: f32, y: f32) {
     with_state_mut!(state, {
         let render_state = state.render_state_mut();
-        render_state.viewbox.set_all(zoom, x, y);
-        state.render_state.cancel_animation_frame();
-        state.render_from_cache();
+        render_state.set_view(zoom, x, y);
     });
 }
 

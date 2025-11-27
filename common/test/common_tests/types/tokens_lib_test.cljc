@@ -1440,8 +1440,7 @@
            result   (ctob/export-dtcg-json tokens-lib)
            expected {"$themes" [{"description" ""
                                  "group" "group-1"
-                                 "is-source" false
-                                 "modified-at" now
+                                 "isSource" false
                                  "id" "test-id-00"
                                  "name" "theme-1"
                                  "selectedTokenSets" {"core" "enabled"}}]
@@ -1558,12 +1557,11 @@
                                                                  :external-id "test-id-01"
                                                                  :modified-at now
                                                                  :sets #{"core"}))
-                          (ctob/toggle-theme-active? (thi/id :theme-1)))
+                          (ctob/toggle-theme-active (thi/id :theme-1)))
            result   (ctob/export-dtcg-json tokens-lib)
            expected {"$themes" [{"description" ""
                                  "group" "group-1"
-                                 "is-source" false
-                                 "modified-at" now
+                                 "isSource" false
                                  "id" "test-id-01"
                                  "name" "theme-1"
                                  "selectedTokenSets" {"core" "enabled"}}]
@@ -1612,12 +1610,11 @@
                                                                  :external-id "test-id-01"
                                                                  :modified-at now
                                                                  :sets #{"some/set"}))
-                          (ctob/toggle-theme-active? (thi/id :theme-1)))
+                          (ctob/toggle-theme-active (thi/id :theme-1)))
            result   (ctob/export-dtcg-multi-file tokens-lib)
            expected {"$themes.json" [{"description" ""
                                       "group" "group-1"
-                                      "is-source" false
-                                      "modified-at" now
+                                      "isSource" false
                                       "id" "test-id-01"
                                       "name" "theme-1"
                                       "selectedTokenSets" {"some/set" "enabled"}}]

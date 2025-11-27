@@ -266,10 +266,6 @@
                                 typography-token-keys
                                 #{:line-height}))
 
-;; TODO: Created to extract the font-size feature from the typography feature flag.
-;; Delete this once the typography feature flag is removed.
-(def ff-typography-keys (set/difference typography-keys font-size-keys))
-
 (def ^:private schema:number
   (-> (reduce mu/union [[:map [:line-height {:optional true} token-name-ref]]
                         schema:rotation])
@@ -309,6 +305,10 @@
    schema:text-case
    schema:text-decoration
    schema:dimensions])
+
+(defn token-attr?
+  [attr]
+  (contains? all-keys attr))
 
 (defn shape-attr->token-attrs
   ([shape-attr] (shape-attr->token-attrs shape-attr nil))
@@ -403,15 +403,15 @@
     :text    text-attributes
     nil))
 
-(defn appliable-attrs
+(defn appliable-attrs-for-shape
   "Returns intersection of shape `attributes` for `shape-type`."
   [attributes shape-type is-layout]
   (set/intersection attributes (shape-type->attributes shape-type is-layout)))
 
-(defn any-appliable-attr?
+(defn any-appliable-attr-for-shape?
   "Checks if `token-type` supports given shape `attributes`."
   [attributes token-type is-layout]
-  (seq (appliable-attrs attributes token-type is-layout)))
+  (d/not-empty? (appliable-attrs-for-shape attributes token-type is-layout)))
 
 ;; Token attrs that are set inside content blocks of text shapes, instead
 ;; at the shape level.
